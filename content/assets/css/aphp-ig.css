@@ -210,17 +210,34 @@ body, p, li, td, th, span, div, a, input, select, textarea {
 }
 
 /* ============================================================
-   Icônes de liens externes (masquées)
+   Icônes de liens externes (#5)
+   Le PNG de project.css est remplacé par une icône SVG qui suit la
+   couleur du lien, limitée au contenu (pas navbar / sidebar / footer).
    ============================================================ */
 
 p a[href^="http://"]::after,
 p a[href^="https://"]::after,
 li a[href^="http://"]::after,
-li a[href^="https://"]::after,
+li a[href^="https://"]::after {
+  content: none;
+}
+
+#content-wrapper :is(p, li, td) a:is([href^="http://"], [href^="https://"]):not([data-no-external]):not(:has(img))::after {
+  content: "";
+  display: inline-block;
+  width: 0.75em;
+  height: 0.75em;
+  margin-left: 0.2em;
+  vertical-align: baseline;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M10 14 21 3'/%3E%3C/svg%3E") no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M10 14 21 3'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+
+/* Icônes images injectées par le publisher : masquées (doublon avec ::after) */
 a img[src*="external.png"],
 a img[src*="external"],
 .external-link-icon {
-  content: none !important;
   display: none !important;
 }
 
@@ -622,6 +639,28 @@ table.colsi td span.copy-text, table.colsd td span.copy-text {
   #segment-content > .container > .row {
     display: flex;
   }
+
+  /* Chaîne flex complète jusqu'à la TOC (#4) : sans min-height:0 à chaque
+     niveau, le contenu dépasse .sidebar-sticky (overflow:hidden) et le bas
+     de la TOC est coupé sans possibilité de défiler. La liste de navigation
+     et la TOC se partagent la hauteur et défilent chacune de leur côté. */
+  #sidebar-wrapper {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .sidebar-toc-section {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 120px;
+  }
+
+  .sidebar-toc-wrapper {
+    min-height: 0;
+  }
 }
 
 #sidebar-nav {
@@ -834,6 +873,10 @@ table.colsi td span.copy-text, table.colsd td span.copy-text {
     max-height: 100%;
     flex: 1;
     min-height: 0;
+    /* Scroll vertical interne si la nav dépasse la hauteur du drawer.
+       Sans ça, les items du bas sont inaccessibles sur les gros IG. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .sidebar-toc-section {
@@ -900,6 +943,7 @@ table.colsi td span.copy-text, table.colsd td span.copy-text {
    Icônes d'ancrage
    ============================================================ */
 
+/* Permaliens visibles au survol / focus des titres (copier le lien d'une section). */
 .anchorjs-link {
   opacity: 0;
   transition: opacity 0.15s;
@@ -946,13 +990,30 @@ td.hierarchy {
   padding: 8px 10px !important;
   font-family: 'Inter', sans-serif !important;
   font-size: 13px !important;
-  white-space: nowrap;
+  /* Wrap autorisé par défaut pour Type/Description (évite le scroll horizontal).
+     !important nécessaire car le publisher applique parfois du nowrap inline. */
+  /* break-word (et non anywhere) : ne réduit pas la largeur min-content,
+     donc les jetons courts (0..1, noms de types) ne sont pas coupés. */
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+  vertical-align: top;
 }
 
+/* Les liens dans les cellules (typiquement les noms de profils dans la colonne Type)
+   doivent aussi autoriser le wrap, sinon ils restent sur une ligne */
 td.hierarchy a {
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
   color: #000000;
   text-decoration: none;
   font-size: 13px;
+}
+
+/* Colonnes Name (arbre : alignement des icônes), Flags et Card. : jamais de retour à la ligne */
+td.hierarchy:nth-child(-n+3),
+td.hierarchy:nth-child(-n+3) a {
+  white-space: nowrap !important;
+  overflow-wrap: normal !important;
 }
 
 td.hierarchy a:hover {
@@ -963,9 +1024,48 @@ td.hierarchy a:hover {
    Divers
    ============================================================ */
 
-.viewer-container { width: 100%; overflow: hidden; position: relative; }
+/* overflow: hidden indispensable : le SVG (souvent plus large que la colonne)
+   est positionné en absolu et déplaçable / zoomable ; sans découpage il
+   recouvre le texte voisin et la sidebar. */
+.viewer-container {
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+}
 .svg-container { width: 100%; height: 100%; cursor: grab; position: absolute; top: 0; left: 0; }
 .svg-container.grabbing { cursor: grabbing; }
+
+/* Conteneur sans diagramme (fallback d'erreur PlantUML/Graphviz) : on ne
+   découpe pas et la hauteur suit le message. */
+.viewer-container:not(:has(.svg-container)) {
+  overflow: visible;
+  height: auto !important;
+}
+
+/* Fallback d'erreur PlantUML/Graphviz (par défaut affiché en vert vif en gras,
+   ce qui déborde visuellement de la page). On le présente comme une erreur
+   technique plus discrète et délimitée. Ciblé sur les enfants directs pour ne
+   pas toucher au contenu légitime d'un diagramme. */
+.viewer-container > pre,
+.viewer-container > font[color="red"],
+.viewer-container > font[color="green"],
+.viewer-container > [style*="color:green"],
+.viewer-container > [style*="color: green"] {
+  color: #B71C1C !important;
+  font-family: 'Consolas', 'Menlo', monospace !important;
+  font-size: 12px !important;
+  font-weight: normal !important;
+  background: #FFEBEE;
+  border: 1px solid #EF9A9A;
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  display: block;
+}
 
 .ig-figure { display: block; margin-left: auto; margin-right: auto; margin-bottom: 10px; }
 .ig-figure-img { border: 1px solid #e0e0e0; border-radius: 0.375rem; max-width: 100%; height: auto; padding: 2px; margin-bottom: 0.5rem; line-height: 1; }
