@@ -1,0 +1,12 @@
+{
+  "name": "ig-template-aphp-e2e",
+  "private": true,
+  "description": "Tests Playwright du template AP-HP sur des IG FHIR construits localement",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "http-server": "14.1.1"
+  }
+}

@@ -158,166 +158,188 @@
 
   // Fermer le drawer au click sur un lien de navigation (sinon il reste ouvert
   // pendant le chargement de la page suivante ou le scroll vers une ancre).
+  // Listener délégué : couvre aussi les liens de la TOC, ajoutée plus tard.
   if (sidebarWrapper) {
-    var sidebarLinks = sidebarWrapper.querySelectorAll('a[href]');
-    for (var sl = 0; sl < sidebarLinks.length; sl++) {
-      sidebarLinks[sl].addEventListener('click', function() {
-        if (sidebarWrapper.classList.contains('open')) closeDrawer();
-      });
-    }
-  }
+    sidebarWrapper.addEventListener('click', function(e) {
+      if (e.target.closest('a[href]') && sidebarWrapper.classList.contains('open')) closeDrawer();
+    });
 
-  // Si l'utilisateur élargit la fenêtre au-dessus du breakpoint mobile alors
-  // que le drawer est ouvert, on remet l'état desktop propre (sinon body reste
-  // figé par overflow:hidden et le focus trap reste actif).
-  window.addEventListener('resize', function() {
-    if (window.innerWidth >= 992 && sidebarWrapper.classList.contains('open')) {
-      closeDrawer();
-    }
-  });
+    // Si l'utilisateur élargit la fenêtre au-dessus du breakpoint mobile alors
+    // que le drawer est ouvert, on remet l'état desktop propre (sinon body reste
+    // figé par overflow:hidden et le focus trap reste actif).
+    window.addEventListener('resize', function() {
+      if (window.innerWidth >= 992 && sidebarWrapper.classList.contains('open')) {
+        closeDrawer();
+      }
+    });
+  }
 
 
   /* --- Table des matières (TOC) --- */
 
+  // La TOC reflète les titres VISIBLES de la page. Elle est reconstruite à
+  // chaque changement d'onglet (onglets jQuery UI des pages profil, onglets
+  // Bootstrap), sinon elle pointerait vers des titres d'un onglet caché (#6).
+  // Chaque lien garde une référence directe à son titre : le publisher peut
+  // générer plusieurs titres avec le même id, et '#id' viserait alors le
+  // premier du document, éventuellement caché.
+
   var sidebarNav = document.getElementById('sidebar-nav');
   var innerContent = document.querySelector('#content-wrapper > .inner-wrapper');
+  var tocSection = null;
+  var headingObserver = null;
+  var tocEntries = [];        // [{ link, heading }]
+  var clickLockUntil = 0;
+  var pendingSpyHeading = null;
+  var lockTimer = null;
+
+  function isVisible(el) {
+    return el.offsetParent !== null || el.getClientRects().length > 0;
+  }
+
+  // Texte d'un titre pour la TOC. textContent colle les morceaux : sur les
+  // CapabilityStatement, '<span style="float:right">Resource Conformance:
+  // SHALL</span>Appointment' donnerait 'SHALLAppointment'. On sépare donc
+  // les éléments flottants ou de type bloc par une espace ; les éléments en
+  // ligne (code, em, a…) restent collés comme dans le rendu.
+  function headingText(node) {
+    var out = '';
+    for (var c = node.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) { out += c.nodeValue; continue; }
+      if (c.nodeType !== 1) continue;
+      var cs = getComputedStyle(c);
+      var separate = cs.cssFloat !== 'none' || !/^inline/.test(cs.display);
+      var inner = headingText(c);
+      out += separate ? ' ' + inner + ' ' : inner;
+    }
+    return out;
+  }
+
+  function collectHeadings() {
+    var all = innerContent.querySelectorAll('h2[id], h3[id], h4[id]');
+    var result = [];
+    var seenIds = {};
+    for (var j = 0; j < all.length; j++) {
+      var h = all[j];
+      var tabPane = h.closest('.tab-pane');
+      if (tabPane && !tabPane.classList.contains('active')) continue;
+      if (!isVisible(h)) continue;
+      if (seenIds[h.id]) continue;   // un même id visible deux fois : on garde le premier
+      seenIds[h.id] = true;
+      result.push(h);
+    }
+    return result;
+  }
+
+  function setActiveTocLink(link) {
+    for (var i = 0; i < tocEntries.length; i++) {
+      tocEntries[i].link.classList.remove('toc-active');
+      tocEntries[i].link.removeAttribute('aria-current');
+    }
+    if (link) {
+      link.classList.add('toc-active');
+      link.setAttribute('aria-current', 'location');
+    }
+  }
+
+  function linkForHeading(heading) {
+    for (var i = 0; i < tocEntries.length; i++) {
+      if (tocEntries[i].heading === heading) return tocEntries[i].link;
+    }
+    return null;
+  }
+
+  // Click sur un lien TOC : l'état actif est fixé immédiatement et l'observer
+  // est suspendu pendant le scroll smooth. Une intersection survenue pendant
+  // le verrou est mémorisée et appliquée à son expiration.
+  function lockSpy() {
+    clickLockUntil = Date.now() + 800;
+    pendingSpyHeading = null;
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(function() {
+      if (pendingSpyHeading) setActiveTocLink(linkForHeading(pendingSpyHeading));
+      pendingSpyHeading = null;
+    }, 800);
+  }
+
+  function buildToc() {
+    if (headingObserver) { headingObserver.disconnect(); headingObserver = null; }
+    if (tocSection && tocSection.parentNode) tocSection.parentNode.removeChild(tocSection);
+    tocSection = null;
+    tocEntries = [];
+
+    var headings = collectHeadings();
+    var tocUl = document.createElement('ul');
+    var skippedFirstH2 = false;
+    for (var m = 0; m < headings.length; m++) {
+      var heading = headings[m];
+      var tag = heading.tagName.toLowerCase();
+      if (tag === 'h2' && !skippedFirstH2) { skippedFirstH2 = true; continue; }
+      var text = headingText(heading).replace(/\s+/g, ' ').replace(/^\s*[\d.]+\s*/, '').trim();
+      if (!text) continue;
+
+      var li = document.createElement('li');
+      if (tag === 'h3') li.style.paddingLeft = '12px';
+      if (tag === 'h4') li.style.paddingLeft = '24px';
+
+      var tocLink = document.createElement('a');
+      tocLink.href = '#' + heading.id;
+      tocLink.textContent = text;
+      li.appendChild(tocLink);
+      tocUl.appendChild(li);
+      tocEntries.push({ link: tocLink, heading: heading });
+    }
+    if (tocEntries.length === 0) return;
+
+    tocSection = document.createElement('div');
+    tocSection.className = 'sidebar-toc-section';
+    var tocWrap = document.createElement('div');
+    tocWrap.className = 'sidebar-toc-wrapper';
+    var tocTitle = document.createElement('div');
+    tocTitle.className = 'sidebar-toc-title';
+    tocTitle.textContent = 'Sur cette page';
+    tocWrap.appendChild(tocTitle);
+    var tocNav = document.createElement('nav');
+    tocNav.className = 'sidebar-page-toc';
+    tocNav.setAttribute('aria-label', 'Sur cette page');
+    tocNav.appendChild(tocUl);
+    tocWrap.appendChild(tocNav);
+    tocSection.appendChild(tocWrap);
+    sidebarNav.appendChild(tocSection);
+
+    tocEntries.forEach(function(entry) {
+      entry.link.addEventListener('click', function(e) {
+        // Scroll vers l'élément lui-même (et non le premier '#id' du document).
+        e.preventDefault();
+        setActiveTocLink(entry.link);
+        lockSpy();
+        entry.heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (history.replaceState) history.replaceState(null, '', '#' + entry.heading.id);
+      });
+    });
+
+    // Scroll spy : quand un titre entre dans la zone de lecture
+    if ('IntersectionObserver' in window) {
+      headingObserver = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (!entry.isIntersecting) return;
+          if (Date.now() < clickLockUntil) { pendingSpyHeading = entry.target; return; }
+          setActiveTocLink(linkForHeading(entry.target));
+        });
+      }, { rootMargin: '-10% 0px -80% 0px', threshold: 0 });
+      tocEntries.forEach(function(entry) { headingObserver.observe(entry.heading); });
+    }
+  }
+
   if (sidebarNav && innerContent) {
     var origToc = document.querySelector('.markdown-toc');
     if (origToc) origToc.style.display = 'none';
 
-    var allHeadings = innerContent.querySelectorAll('h2[id], h3[id], h4[id]');
-    var headings = [];
-    var seenIds = {};
-    for (var j = 0; j < allHeadings.length; j++) {
-      var h = allHeadings[j];
+    buildToc();
 
-      // 1. Exclure les tabs Bootstrap inactifs (structure standard .tab-pane).
-      //    Couvre les onglets niveau 1 des pages profil FHIR (Content / Mappings / XML / JSON).
-      var tabPane = h.closest('.tab-pane');
-      if (tabPane && !tabPane.classList.contains('active')) continue;
-
-      // 2. Exclure les éléments réellement cachés en CSS (display:none hérité
-      //    d'un ancêtre). Couvre les tabs imbriqués, accordéons fermés, etc.,
-      //    sans supposer une structure HTML particulière. Générique : marche
-      //    pour tout mécanisme standard de masquage par display:none.
-      if (h.offsetParent === null) continue;
-
-      // 3. Dédupliquer par id : un ancre doit être unique dans le document.
-      //    Si le publisher en génère plusieurs avec le même id (cas observé
-      //    sur les vues multiples d'un même profil), on ne garde que la première.
-      //    Pas de déduplication par texte : deux sections distinctes peuvent
-      //    légitimement porter le même intitulé.
-      if (seenIds[h.id]) continue;
-      seenIds[h.id] = true;
-
-      headings.push(h);
-    }
-
-    if (headings.length > 0) {
-      var tocSection = document.createElement('div');
-      tocSection.className = 'sidebar-toc-section';
-
-      var tocWrap = document.createElement('div');
-      tocWrap.className = 'sidebar-toc-wrapper';
-
-      var tocTitle = document.createElement('div');
-      tocTitle.className = 'sidebar-toc-title';
-      tocTitle.textContent = 'Sur cette page';
-      tocWrap.appendChild(tocTitle);
-
-      var tocNav = document.createElement('nav');
-      tocNav.className = 'sidebar-page-toc';
-      var tocUl = document.createElement('ul');
-
-      var skippedFirstH2 = false;
-      for (var m = 0; m < headings.length; m++) {
-        var heading = headings[m];
-        var tag = heading.tagName.toLowerCase();
-        if (tag === 'h2' && !skippedFirstH2) { skippedFirstH2 = true; continue; }
-        var text = heading.textContent.replace(/^\s*[\d.]+\s*/, '').trim();
-        if (!text) continue;
-
-        var li = document.createElement('li');
-        if (tag === 'h3') li.style.paddingLeft = '12px';
-        if (tag === 'h4') li.style.paddingLeft = '24px';
-
-        var tocLink = document.createElement('a');
-        tocLink.href = '#' + heading.id;
-        tocLink.textContent = text;
-        li.appendChild(tocLink);
-        tocUl.appendChild(li);
-      }
-
-      tocNav.appendChild(tocUl);
-
-      // Ne pas afficher la TOC si elle est vide
-      if (tocUl.children.length === 0) {
-        // rien
-      } else {
-        tocWrap.appendChild(tocNav);
-        tocSection.appendChild(tocWrap);
-
-        // TOC intégrée dans le flux de la sidebar
-        sidebarNav.appendChild(tocSection);
-      }
-
-      // Scroll spy (met en évidence la section active dans la TOC)
-      var tocAllLinks = tocUl.querySelectorAll('a');
-      if (tocAllLinks.length > 0) {
-        var spyHeadings = [];
-        for (var s = 0; s < tocAllLinks.length; s++) {
-          var id = tocAllLinks[s].getAttribute('href');
-          var target = id ? document.querySelector(id) : null;
-          if (target) spyHeadings.push({ link: tocAllLinks[s], target: target });
-        }
-
-        function setActiveTocLink(link) {
-          for (var i = 0; i < tocAllLinks.length; i++) {
-            tocAllLinks[i].classList.remove('toc-active');
-            tocAllLinks[i].removeAttribute('aria-current');
-          }
-          if (link) {
-            link.classList.add('toc-active');
-            link.setAttribute('aria-current', 'location');
-          }
-        }
-
-        // Click direct sur un lien TOC : on fixe l'état actif immédiatement.
-        // Sinon l'IntersectionObserver peut rater le scroll si la cible atterrit
-        // hors de la zone -10%/-80%. On suspend l'observer pendant 800ms pour
-        // ne pas écraser le choix utilisateur pendant le scroll smooth.
-        var clickLockUntil = 0;
-        for (var s = 0; s < tocAllLinks.length; s++) {
-          (function(link) {
-            link.addEventListener('click', function() {
-              setActiveTocLink(link);
-              clickLockUntil = Date.now() + 800;
-            });
-          })(tocAllLinks[s]);
-        }
-
-        // IntersectionObserver : quand un heading entre dans la zone de lecture
-        if ('IntersectionObserver' in window) {
-          var headingObserver = new IntersectionObserver(function(entries) {
-            if (Date.now() < clickLockUntil) return;
-            entries.forEach(function(entry) {
-              if (entry.isIntersecting) {
-                var id = '#' + entry.target.id;
-                for (var s = 0; s < spyHeadings.length; s++) {
-                  if ('#' + spyHeadings[s].target.id === id) {
-                    setActiveTocLink(spyHeadings[s].link);
-                    break;
-                  }
-                }
-              }
-            });
-          }, { rootMargin: '-10% 0px -80% 0px', threshold: 0 });
-
-          for (var s = 0; s < spyHeadings.length; s++) {
-            headingObserver.observe(spyHeadings[s].target);
-          }
-        }
-      }
+    // Reconstruction après changement d'onglet (jQuery UI et Bootstrap).
+    if (window.jQuery) {
+      window.jQuery(document).on('tabsactivate shown.bs.tab', function() { buildToc(); });
     }
   }
 })();
