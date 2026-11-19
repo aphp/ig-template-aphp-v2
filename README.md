@@ -29,7 +29,7 @@ Le template ajoute à la base HL7 la charte graphique AP-HP, une navigation lat�
 **Rendu de contenu**
 
 - Coloration syntaxique Prism, avec les langages FSH et FML
-- Diagrammes Mermaid : les blocs ` ```mermaid ` sont rendus automatiquement (`securityLevel: 'sandbox'`)
+- Diagrammes Mermaid : les blocs ` ```mermaid ` sont rendus automatiquement (`securityLevel: 'strict'`)
 - Zoom et déplacement dans les diagrammes SVG (D3)
 - Onglets pour les exemples de code (`div.code-sample`)
 
